@@ -1,0 +1,13 @@
+{
+  "FullName": "Example",
+  "Version": 0.3,
+  "MinApiVersion": 2,
+  "Enabled": true,
+  "Config": {
+    "greeting": "hello from Example config",
+    "max_kills": 10,
+    "announce": true,
+    "spawn_rate": 1.5
+  },
+  "Dependencies": []
+}

@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PalApi - plugin API reference</title>
+<style>
+  :root{
+    --bg:#0f1216; --card:#171c23; --card2:#1e2530; --ink:#e7edf3; --dim:#9fb0c0;
+    --line:#2a323d; --accent:#5cc8ff; --accent2:#7ee787; --warn:#ffb454; --danger:#ff7b7b; --code:#0b0e12;
+  }
+  @media (prefers-color-scheme:light){
+    :root{ --bg:#f5f7fa; --card:#ffffff; --card2:#eef2f7; --ink:#16202b; --dim:#5a6b7b;
+      --line:#d8e0ea; --accent:#0a7ec2; --accent2:#1f8f3b; --warn:#a8620a; --danger:#c0392b; --code:#0b0e12; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 20px 80px}
+  header h1{font-size:30px;margin:0 0 6px}
+  header p{color:var(--dim);margin:4px 0}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border:1px solid var(--line);border-radius:999px;color:var(--dim);margin-right:6px}
+  .lead{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:22px 0}
+  h2{margin:34px 0 8px;font-size:22px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h2 .v{font-size:12px;color:var(--dim);font-weight:400}
+  .intro{color:var(--dim);margin:2px 0 14px}
+  .fn{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0}
+  .fn .sig{font-family:ui-monospace,Consolas,monospace;font-size:13.5px;background:var(--code);color:#dbe6f0;padding:10px 12px;border-radius:8px;overflow-x:auto;white-space:pre;border:1px solid #000}
+  .fn h3{margin:0 0 8px;font-size:17px;font-family:ui-monospace,Consolas,monospace;color:var(--accent)}
+  .fn .what{margin:12px 0 6px}
+  .fn .use{background:var(--card2);border-left:3px solid var(--accent2);border-radius:6px;padding:9px 12px;margin:10px 0 0;font-size:14.5px}
+  .fn .use b{color:var(--accent2)}
+  .tag{font-size:11px;padding:2px 8px;border-radius:999px;margin-right:6px;white-space:nowrap;display:inline-block}
+  .t-thread{background:rgba(255,180,84,.14);color:var(--warn);border:1px solid rgba(255,180,84,.3)}
+  .t-any{background:rgba(126,231,135,.14);color:var(--accent2);border:1px solid rgba(126,231,135,.3)}
+  .t-danger{background:rgba(255,123,123,.14);color:var(--danger);border:1px solid rgba(255,123,123,.3)}
+  .meta{margin:0 0 10px}
+  .note{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:16px 0;color:var(--dim)}
+  .note b{color:var(--ink)}
+  code{font-family:ui-monospace,Consolas,monospace;background:var(--card2);padding:1px 5px;border-radius:5px;font-size:13.5px}
+  a{color:var(--accent)}
+  .toc{columns:2;gap:24px;margin:10px 0 0;padding:0;list-style:none;font-size:14.5px}
+  @media (max-width:640px){.toc{columns:1}}
+  .toc a{text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>PalApi &mdash; plugin API reference</h1>
+  <p><span class="pill">framework 0.1.0 (beta)</span><span class="pill">ABI v11</span></p>
+  <p>Everything a PalApi plugin can do, grouped by area. For each function: what it does, when a plugin
+  uses it, and which thread it must run on. This complements <code>PLUGIN_API.md</code>; the whole API
+  lives in one header, <code>include/palapi/palapi.h</code>.</p>
+</header>
+
+<div class="lead">
+  <b>What is a plugin?</b> A native <code>.dll</code>. When the server boots, PalApi loads it and hands it
+  a struct of function pointers (the <code>PalApi</code> struct). A plugin has two entry points:
+  <div class="sig" style="margin-top:10px;font-family:ui-monospace,Consolas,monospace;font-size:13px;background:var(--code);color:#dbe6f0;padding:10px 12px;border-radius:8px;white-space:pre;overflow-x:auto">extern "C" __declspec(dllexport) void Plugin_Init(const PalApi* api);   // called on load
+extern "C" __declspec(dllexport) void Plugin_Unload(void);            // called on unload (optional)</div>
+  In <code>Plugin_Init</code> the plugin receives <code>api</code> and calls back through it
+  (e.g. <code>api-&gt;log.info("hello")</code>). The ABI is append-only: check <code>api-&gt;abi_version</code>
+  before using a field newer than the version you built against.
+</div>
+
+<div class="note">
+  <b>The two threads &mdash; read this first.</b> Some functions must run on the <b>game thread</b>: anything
+  that READS, WRITES or CALLS the game engine. You get there via <code>run_on_game_thread</code>, or from a
+  callback that already runs there (chat, timer, ProcessEvent observer). Functions marked
+  <span class="tag t-any">any thread</span> are safe anywhere. Golden rule for every callback:
+  <b>return fast, never block</b> &mdash; the game thread serves every player.
+</div>
+
+<div class="note">
+  <b>The plugin handle.</b> Each plugin gets a unique id (<code>api-&gt;plugin_handle</code>). Pass it to
+  anything you register (hooks, commands, timers): PalApi then removes all of your registrations
+  automatically when your plugin unloads. No leaks, no crashes.
+</div>
+
+<div class="note">
+  <b>Trust model.</b> A plugin is trusted native code, free to do anything the host can &mdash; including
+  crashing the server on purpose (see <a href="#host">host.panic</a>). The security boundary is the
+  operator's choice of which plugins to enable, not the framework second-guessing you. What the framework
+  guarantees is <b>attribution</b>: when a plugin faults it is isolated and the log names the plugin (and the
+  engine function for an observer); on a full crash a <code>palapi_crash_*.txt</code> names the last plugin
+  that was running.
+</div>
+
+<div class="note">
+  <b>Contents</b>
+  <ul class="toc">
+    <li><a href="#log">Logging (log)</a></li>
+    <li><a href="#reflect">Finding objects (reflect)</a></li>
+    <li><a href="#call">Calling engine functions (call)</a></li>
+    <li><a href="#state">Reading &amp; writing state (state)</a></li>
+    <li><a href="#thread">Marshaling to the game thread (thread)</a></li>
+    <li><a href="#hook">Low-level hooks (hook)</a></li>
+    <li><a href="#events">Observing engine calls (events)</a></li>
+    <li><a href="#server">Broadcast to players (server)</a></li>
+    <li><a href="#commands">Chat commands (commands)</a></li>
+    <li><a href="#rcon">RCON commands (rcon)</a></li>
+    <li><a href="#timers">Timers (timers)</a></li>
+    <li><a href="#config">Plugin config (config)</a></li>
+    <li><a href="#players">Connected players (players)</a></li>
+    <li><a href="#call2">Typed calls (call2)</a></li>
+    <li><a href="#host">Deliberate crash (host)</a></li>
+  </ul>
+</div>
+
+<h2 id="log">Logging <span class="v">&mdash; api&gt;log</span></h2>
+<div class="fn">
+  <h3>log.info / log.warn / log.error</h3>
+  <div class="sig">void info(const char* message);
+void warn(const char* message);
+void error(const char* message);</div>
+  <p class="what">Write a line to the server log (info / warning / error).</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> tracing what the plugin does; the first reflex for debugging.</div>
+</div>
+
+<h2 id="reflect">Finding objects and classes <span class="v">&mdash; api&gt;reflect / reflect2</span></h2>
+<p class="intro">PalApi resolves game classes and objects <b>by name</b> (no hardcoded addresses), which makes
+it robust across game updates.</p>
+<div class="fn">
+  <h3>reflect.find_class</h3>
+  <div class="sig">uint64_t find_class(const char* class_name);</div>
+  <p class="what">Resolve a game class definition by name. Returns its address, or 0 if absent.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> checking a class exists on this build, or getting a starting point before reading/calling.</div>
+</div>
+<div class="fn">
+  <h3>reflect.name_of / reflect.class_name_of</h3>
+  <div class="sig">int name_of(uint64_t object, char* out, int cap);
+int class_name_of(uint64_t object, char* out, int cap);</div>
+  <p class="what">Give an object's name, or its class name. Returns the length written (0 on failure).</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> knowing what you are working with, showing readable info.</div>
+</div>
+<div class="fn">
+  <h3>reflect2.find_object_by_name</h3>
+  <div class="sig">uint64_t find_object_by_name(const char* name);</div>
+  <p class="what">The first object named exactly this (e.g. a class-default object). 0 if none.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> reaching a known, unique game object.</div>
+</div>
+<div class="fn">
+  <h3>reflect2.find_live_instance</h3>
+  <div class="sig">uint64_t find_live_instance(const char* class_substring);</div>
+  <p class="what">The first LIVE instance whose class name contains this text. 0 if none.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> grabbing a real in-game object (e.g. the game state) to then read from or call.</div>
+</div>
+<div class="fn">
+  <h3>reflect2.process_event_addr</h3>
+  <div class="sig">uint64_t process_event_addr(void);</div>
+  <p class="what">The verified address of <code>ProcessEvent</code> (the engine's universal call dispatch). 0 if not located.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> advanced use. Normally you do NOT touch it directly: to react to ProcessEvent, use <a href="#events">observers</a>.</div>
+</div>
+
+<h2 id="call">Calling engine functions <span class="v">&mdash; api&gt;call (v2)</span></h2>
+<div class="fn">
+  <h3>call.call_getter_int</h3>
+  <div class="sig">int call_getter_int(const char* class_substring, const char* func_name, int* out);</div>
+  <p class="what">Call a no-argument int getter on a live instance of the class. Returns 1 and fills <code>*out</code> on success.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> reading a value the game computes (e.g. max player count) through the real engine function.</div>
+</div>
+<div class="fn">
+  <h3>call.call_function_ints</h3>
+  <div class="sig">int call_function_ints(uint64_t instance, const char* func_name,
+                      const int* args, int argc, int* out_ret);</div>
+  <p class="what">Call a function taking <code>argc</code> ints and returning an int, on the instance. 1 on success.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> triggering a game action that takes ints. (For other parameter types, see <a href="#call2">call2</a>.)</div>
+</div>
+
+<h2 id="state">Reading and writing state <span class="v">&mdash; api&gt;state (v2)</span></h2>
+<div class="fn">
+  <h3>state.read_int32 / state.read_float</h3>
+  <div class="sig">int read_int32(uint64_t instance, const char* prop, int* out);
+int read_float(uint64_t instance, const char* prop, float* out);</div>
+  <p class="what">Read a property (int or float) by name from an instance. 1 on success.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> reading a precise value of an object (health, score, etc.).</div>
+</div>
+<div class="fn">
+  <h3>state.resolve_field_addr</h3>
+  <div class="sig">int resolve_field_addr(const char* class_substring, const char* prop, uint64_t* out_addr);</div>
+  <p class="what">Give the exact address of a property on a live instance of a class. 1 on success.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> getting a field address before writing it with <code>write_scalar</code>.</div>
+</div>
+<div class="fn">
+  <h3>state.write_scalar</h3>
+  <div class="sig">int write_scalar(uint64_t addr, const void* src, uint32_t n);  // n in {1,2,4,8}</div>
+  <p class="what">Write a small value (1..8 bytes) at an address, GUARDED: PalApi checks the region is writable
+  and records the old value so the write can be reverted. 1 if accepted, 0 if the safety gate refuses. Never faults the server.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> changing a game value (e.g. raising a limit) safely, with an undo safety net.</div>
+</div>
+<div class="fn">
+  <h3>state.undo_last</h3>
+  <div class="sig">int undo_last(void);</div>
+  <p class="what">Revert the most recent guarded write. 1 if one was reverted.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> rolling back a <code>write_scalar</code>.</div>
+</div>
+
+<h2 id="thread">Marshaling to the game thread <span class="v">&mdash; api&gt;thread (v2)</span></h2>
+<div class="fn">
+  <h3>thread.run_on_game_thread</h3>
+  <div class="sig">int run_on_game_thread(void (*fn)(void* user), void* user, const void* plugin_handle);</div>
+  <p class="what">Run <code>fn(user)</code> on the game thread (at the next tick). 1 if queued. Pass
+  <code>api-&gt;plugin_handle</code>: if the plugin unloads first, the job is dropped (calling into an unmapped DLL would crash).</p>
+  <div class="meta"><span class="tag t-any">any thread</span> <span class="tag t-thread">runs the job on the game thread</span></div>
+  <div class="use"><b>Used for:</b> the bridge. From anywhere (e.g. a background thread), go through here to safely read/write/call the game.</div>
+</div>
+
+<h2 id="hook">Low-level hooks <span class="v">&mdash; api&gt;hook (v2)</span></h2>
+<div class="fn">
+  <h3>hook.set_hook</h3>
+  <div class="sig">int set_hook(uint64_t target_addr, void* detour, void** out_original,
+             const char* label, const void* plugin_handle);</div>
+  <p class="what">Detour a function: calls now go through the plugin, which can call the original (given in
+  <code>*out_original</code>). Removed automatically on unload.</p>
+  <div class="meta"><span class="tag t-danger">advanced / powerful</span></div>
+  <div class="use"><b>Used for:</b> intercepting a specific function. <b>Note:</b> to react to <code>ProcessEvent</code>
+  (the common target) do NOT use this &mdash; use <a href="#events">observers</a> (stacking hooks on one address crashes the server).</div>
+</div>
+<div class="fn">
+  <h3>hook.remove_my_hooks</h3>
+  <div class="sig">int remove_my_hooks(const void* plugin_handle);</div>
+  <p class="what">Remove every hook set by this plugin. Returns how many were removed.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> cleaning up before unload (also done automatically).</div>
+</div>
+
+<h2 id="events">Observing engine calls <span class="v">&mdash; api&gt;events (v3)</span></h2>
+<p class="intro">The right way to react to game events: PalApi installs ONE real hook on <code>ProcessEvent</code>
+and fans out to every observer. No hook stacking, no conflict.</p>
+<div class="fn">
+  <h3>events.register_processevent</h3>
+  <div class="sig">int register_processevent(PalProcessEventCallback pre, PalProcessEventCallback post,
+                          void* user, const void* plugin_handle);
+// callback: void cb(void* self, void* function, void* parms, void* user);</div>
+  <p class="what">Register a pre and/or post observer for every engine call. The callback receives the target
+  object, the function being called, and its parameter buffer. Returns a handle &gt; 0, or 0 on failure.</p>
+  <div class="meta"><span class="tag t-thread">game thread (callback runs there)</span></div>
+  <div class="use"><b>Used for:</b> reacting to what happens in game (a player speaks, an action fires...). This is
+  the brick chat commands are built on. <b>Rule:</b> the callback is on the hot path &mdash; it must be VERY fast.</div>
+</div>
+<div class="fn">
+  <h3>events.unregister_processevent</h3>
+  <div class="sig">int unregister_processevent(int handle);</div>
+  <p class="what">Remove one observer by handle. 1 if removed.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> stopping observation (also done automatically on unload).</div>
+</div>
+
+<h2 id="server">Broadcast to players <span class="v">&mdash; api&gt;server (v3)</span></h2>
+<div class="fn">
+  <h3>server.broadcast_message</h3>
+  <div class="sig">int broadcast_message(const char* utf8_text);</div>
+  <p class="what">Show a message on-screen to every connected player. 1 on success.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> announcing something, replying to a chat command.</div>
+</div>
+
+<h2 id="commands">Chat commands <span class="v">&mdash; api&gt;commands (v4) / commands2 (v8)</span></h2>
+<div class="fn">
+  <h3>commands.register_command</h3>
+  <div class="sig">int register_command(const char* prefix, PalCommandCallback callback,
+                     void* user, const void* plugin_handle);
+// callback: void cb(const char* text, void* user);</div>
+  <p class="what">Register a command: when a player types a line whose leading token is <code>prefix</code>
+  (e.g. <code>!ping</code>), the callback is called with the full text. Handle &gt; 0, or 0 on failure.</p>
+  <div class="meta"><span class="tag t-thread">game thread (callback runs there)</span></div>
+  <div class="use"><b>Used for:</b> giving players commands. The callback may reply (broadcast) or read/call the game directly.</div>
+</div>
+<div class="fn">
+  <h3>commands2.register_command_ex</h3>
+  <div class="sig">int register_command_ex(const char* prefix, const char* description,
+                        PalCommandCallback callback, void* user, const void* plugin_handle);</div>
+  <p class="what">Like <code>register_command</code>, plus a short help line listed by the built-in <code>!help</code>.</p>
+  <div class="meta"><span class="tag t-thread">game thread (callback runs there)</span></div>
+  <div class="use"><b>Used for:</b> having your command show in <code>!help</code>. Registering several prefixes on the same callback = aliases.</div>
+</div>
+<div class="fn">
+  <h3>commands.unregister_command</h3>
+  <div class="sig">int unregister_command(int handle);</div>
+  <p class="what">Remove one command by handle. Blocks until any in-flight call finishes.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> disabling a command (also done automatically on unload).</div>
+</div>
+
+<h2 id="rcon">RCON commands <span class="v">&mdash; api&gt;rcon (v10)</span></h2>
+<p class="intro">Reply to a custom command sent by the remote admin tool (RCON), not by chat.</p>
+<div class="fn">
+  <h3>rcon.register_command</h3>
+  <div class="sig">int register_command(const char* prefix, PalRconHandler handler,
+                     void* user, const void* plugin_handle);
+// handler: int h(const char* command, char* reply_out, int reply_cap, void* user);
+//          return 1 = handled (reply_out goes back to the RCON client), 0 = not handled</div>
+  <p class="what">Register an RCON command: when an admin types a line starting with <code>prefix</code>, the
+  handler writes a reply and returns 1. The reply goes back to whoever typed it. Collisions with the native
+  admin commands are refused.</p>
+  <div class="meta"><span class="tag t-danger">return fast, NEVER block</span></div>
+  <div class="use"><b>Used for:</b> admin commands (e.g. a status dump). <b>Note:</b> on the current build this
+  handler runs on the game thread &mdash; if it blocks it freezes the WHOLE server. Just produce a short reply quickly.</div>
+</div>
+<div class="fn">
+  <h3>rcon.unregister_command</h3>
+  <div class="sig">int unregister_command(int handle);</div>
+  <p class="what">Remove an RCON command by handle. 1 if removed.</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> disabling an RCON command (also done automatically on unload).</div>
+</div>
+
+<h2 id="timers">Timers <span class="v">&mdash; api&gt;timers (v5)</span></h2>
+<div class="fn">
+  <h3>timers.schedule_after</h3>
+  <div class="sig">int schedule_after(uint32_t delay_ms, PalTimerCallback callback, void* user, const void* plugin_handle);</div>
+  <p class="what">Run <code>callback</code> ONCE, <code>delay_ms</code> ms from now, on the game thread. Handle &gt; 0.</p>
+  <div class="meta"><span class="tag t-thread">callback runs on the game thread</span></div>
+  <div class="use"><b>Used for:</b> deferring an action (e.g. "in 10s, announce...").</div>
+</div>
+<div class="fn">
+  <h3>timers.schedule_every</h3>
+  <div class="sig">int schedule_every(uint32_t interval_ms, PalTimerCallback callback, void* user, const void* plugin_handle);</div>
+  <p class="what">Run <code>callback</code> REPEATEDLY every <code>interval_ms</code> ms, on the game thread. Handle &gt; 0.</p>
+  <div class="meta"><span class="tag t-thread">callback runs on the game thread</span></div>
+  <div class="use"><b>Used for:</b> a recurring task (e.g. autosave, periodic announce).</div>
+</div>
+<div class="fn">
+  <h3>timers.cancel_timer</h3>
+  <div class="sig">int cancel_timer(int handle);</div>
+  <p class="what">Cancel a timer by handle. 1 if removed.</p>
+  <div class="meta"><span class="tag t-any">any thread (outside a callback)</span></div>
+  <div class="use"><b>Used for:</b> stopping a timer (also done automatically on unload).</div>
+</div>
+
+<h2 id="config">Plugin config <span class="v">&mdash; api&gt;config (v6)</span></h2>
+<p class="intro">A plugin reads ITS OWN settings, declared as a flat <code>Config</code> object in its
+<code>PluginInfo.json</code>: <code>"Config": { "greeting": "hi", "max_kills": 10, "announce": true }</code>.</p>
+<div class="fn">
+  <h3>config.get_string / get_int / get_double / get_bool</h3>
+  <div class="sig">int    get_string(const void* plugin_handle, const char* key, const char* def, char* out, int cap);
+int    get_int(const void* plugin_handle, const char* key, int def);
+double get_double(const void* plugin_handle, const char* key, double def);
+int    get_bool(const void* plugin_handle, const char* key, int def);   // 1/0</div>
+  <p class="what">Read a setting by key. If the key is missing (or the wrong type), returns the default
+  <code>def</code>. In-memory only.</p>
+  <div class="meta"><span class="tag t-any">any thread, even from Plugin_Init</span></div>
+  <div class="use"><b>Used for:</b> being configurable without recompiling. The server operator edits
+  <code>PluginInfo.json</code>, the plugin adapts.</div>
+</div>
+
+<h2 id="players">Connected players <span class="v">&mdash; api&gt;players (v7)</span></h2>
+<p class="intro">List connected players and read a field per player. Read-only.</p>
+<div class="note" style="border-color:rgba(255,180,84,.4)"><b>Cost note:</b> <code>count</code> and
+<code>for_each</code> walk EVERY live game object (hundreds of thousands under load). Call them from a
+background thread or an occasional timer, <b>never</b> from a game-thread callback (chat, observer).</div>
+<div class="fn">
+  <h3>players.count</h3>
+  <div class="sig">int count(const char* class_substring);  // e.g. "PalPlayerState"</div>
+  <p class="what">Count live instances whose class name contains this text.</p>
+  <div class="meta"><span class="tag t-any">any thread (but costly)</span></div>
+  <div class="use"><b>Used for:</b> knowing how many players are connected.</div>
+</div>
+<div class="fn">
+  <h3>players.for_each</h3>
+  <div class="sig">int for_each(const char* class_substring, PalPlayerVisitor visitor, void* user);
+// visitor: int v(uint64_t player, void* user);  return non-zero to continue, 0 to stop</div>
+  <p class="what">Visit each player; the visitor is called for each. Returns how many were visited. The player
+  address is valid only for the duration of the visitor call.</p>
+  <div class="meta"><span class="tag t-any">any thread (but costly)</span></div>
+  <div class="use"><b>Used for:</b> doing something per player (read a field, count by a criterion...).</div>
+</div>
+<div class="fn">
+  <h3>players.read_int / players.read_string</h3>
+  <div class="sig">int read_int(uint64_t player, const char* prop, int* out);
+int read_string(uint64_t player, const char* prop, char* out, int cap);</div>
+  <p class="what">Read a property (int or text) of a given player object. Cheap (one object).</p>
+  <div class="meta"><span class="tag t-any">any thread</span></div>
+  <div class="use"><b>Used for:</b> reading a player's info (name, score, side...) during a <code>for_each</code>.</div>
+</div>
+
+<h2 id="call2">Typed calls <span class="v">&mdash; api&gt;call2 (v9)</span></h2>
+<div class="fn">
+  <h3>call2.call_function_typed</h3>
+  <div class="sig">int call_function_typed(uint64_t instance, const char* func_name,
+                        const PalApiValue* args, int argc,
+                        void* ret_buf, uint32_t ret_size);
+// PalApiValue = { uint32_t size; const void* data; }  (one parameter = size bytes at data)</div>
+  <p class="what">Call a function with mixed-type parameters (int, float, bool, or a plain-data struct like a
+  vector) and read back a scalar/struct result. PalApi CHECKS each parameter's size against the live
+  reflection and refuses on mismatch. Engine-managed types (FString, TArray...) are NOT allowed here &mdash;
+  use dedicated functions (e.g. broadcast) for those.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> calling a richer game function than "just ints" (e.g. one that takes a position vector).</div>
+</div>
+
+<h2 id="host">Deliberate crash, attributed <span class="v">&mdash; api&gt;host (v11)</span></h2>
+<p class="intro">Trust model: a plugin is trusted native code, FREE to do anything, including shutting the
+server down on purpose. Security = the operator's choice of plugins. PalApi's job is not to prevent, but to
+say clearly who crashed and on which function.</p>
+<div class="fn">
+  <h3>host.panic</h3>
+  <div class="sig">void panic(const void* plugin_handle, const char* reason);  // does not return</div>
+  <p class="what">Shut the server down DELIBERATELY, attributed. Logs <code>PANIC: plugin '&lt;name&gt;': &lt;reason&gt;</code>,
+  writes a <code>palapi_panic_*.txt</code> next to the logs (plugin name + reason), then terminates the
+  process &mdash; guaranteed even if called from inside a framework-guarded callback (an intentional stop is
+  NOT isolated like an accidental fault).</p>
+  <div class="meta"><span class="tag t-danger">permanent server shutdown</span></div>
+  <div class="use"><b>Used for:</b> a clean hard stop when it is INTENDED (e.g. corrupt data, refusing to run).
+  Pass <code>api-&gt;plugin_handle</code> so the stop is attributed to you. A native plugin can already crash on
+  its own; <code>panic</code> makes that crash CLEAN and ATTRIBUTED.</div>
+</div>
+
+<div class="note" style="margin-top:34px">
+  <b>In short.</b> A PalApi plugin can: read game state, call its functions, write values safely and
+  reversibly, observe everything that happens (ProcessEvent), offer chat and RCON commands, schedule timers,
+  read its config, list players, broadcast messages, install low-level hooks, load its own dependencies, and
+  deliberately stop the server when it needs to. All while self-adapting to game updates and cleaning up on
+  unload. The core discipline: <b>respect the game thread</b> and <b>never block</b>.
+</div>
+
+</div>
+</body>
+</html>
