@@ -22,7 +22,7 @@
 #include <stdint.h>
 
 #define PALAPI_ABI_VERSION 11u
-#define PALAPI_VERSION     "0.1.0"
+#define PALAPI_VERSION     "0.1.1"
 
 #ifdef __cplusplus
 extern "C" {
