@@ -14,16 +14,21 @@
 // hooking); v3 ProcessEvent observers + broadcast; v4 chat commands; v5 timers; v6 plugin config;
 // v7 player utilities; v8 command help/aliases; v9 typed calls; v10 custom RCON commands;
 // v11 host.panic (deliberate, attributed server crash); v12 server2.send_message_to_player /
-// send_message_to_players (targeted in-game chat message). Each plugin
-// receives its OWN PalApi whose `plugin_handle` uniquely identifies
+// send_message_to_players (targeted in-game chat message); v13 events2.register_interceptor
+// (a ProcessEvent callback that can BLOCK the engine call, for anti-cheat / filters / guards).
+// Each plugin receives its OWN PalApi whose `plugin_handle` uniquely identifies
 // it (pass it to hook/command/timer calls so the framework can remove that plugin's registrations
 // when it unloads).
 #pragma once
 
 #include <stdint.h>
 
-#define PALAPI_ABI_VERSION 12u
-#define PALAPI_VERSION     "0.2.1"
+#define PALAPI_ABI_VERSION 13u
+#define PALAPI_VERSION     "0.3.0"
+
+// Interceptor verdicts (ABI v13). An interceptor returns one of these.
+#define PALAPI_EVENT_PROCEED 0  // let the engine call run normally
+#define PALAPI_EVENT_BLOCK   1  // do NOT run the engine call (veto)
 
 #ifdef __cplusplus
 extern "C" {
@@ -125,6 +130,32 @@ typedef struct PalApiEvents {
     // Unregister a single observer by the handle returned above. Returns 1 if one was removed.
     int (*unregister_processevent)(int handle);
 } PalApiEvents;
+
+// A ProcessEvent INTERCEPTOR callback (ABI v13). Same arguments as an observer, but it RETURNS a
+// verdict: PALAPI_EVENT_PROCEED lets the engine call run, PALAPI_EVENT_BLOCK skips it (the original
+// UFunction is not dispatched). Runs on the game thread, before the original, for EVERY ProcessEvent
+// call -- so it MUST filter to the function(s) it cares about (compare api->reflect.name_of(function)
+// against the name you want) and return PROCEED for all others. Blocking indiscriminately would stop
+// the whole server. Same hot-path rules as an observer: return promptly, never block/loop, never let
+// a C++ exception cross this C boundary. A faulting interceptor is isolated AND treated as PROCEED
+// (fail-open: a broken plugin can never block the server by accident). ONLY the exact value
+// PALAPI_EVENT_BLOCK blocks; any other return value proceeds. This is a READ-and-decide surface:
+// inspect `self`/`function`/`parms` to make the decision, but do NOT mutate `parms` -- typed,
+// certified argument changes are a separate future API, and writing a wrong slot here would corrupt
+// the engine call. A BLOCK is HONOURED only for a function with no return / out / reference parameter
+// (skipping one would leave the caller reading a stale output) and only on the game thread; otherwise
+// the block is refused and the call runs.
+typedef int (*PalInterceptCallback)(void* self, void* function, void* parms, void* user);
+
+typedef struct PalApiEvents2 {
+    // Register an interceptor (see PalInterceptCallback). Returns a handle > 0, or 0 on failure (the
+    // game-thread hook is not active, or callback NULL). Tagged with `plugin_handle` so it is removed
+    // automatically when the plugin unloads. Uses the same single ProcessEvent dispatcher as the
+    // observers -- no extra hook, and unload quiescence covers it.
+    int (*register_interceptor)(PalInterceptCallback callback, void* user, const void* plugin_handle);
+    // Unregister a single interceptor by its handle. Returns 1 if one was removed.
+    int (*unregister_interceptor)(int handle);
+} PalApiEvents2;
 
 typedef struct PalApiServer {
     // Broadcast a server notice (a message shown on-screen to every connected player), via
@@ -387,6 +418,8 @@ typedef struct PalApi {
     PalApiHost host;
     // ABI v12 additions (appended; v1..v11 layout above is unchanged):
     PalApiServer2 server2;
+    // ABI v13 additions (appended LAST; v1..v12 layout above is unchanged):
+    PalApiEvents2 events2;
 } PalApi;
 
 typedef void (*PalApiPluginInit)(const PalApi* api);

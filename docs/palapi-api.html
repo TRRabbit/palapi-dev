@@ -47,7 +47,7 @@
 <div class="wrap">
 <header>
   <h1>PalApi &mdash; plugin API reference</h1>
-  <p><span class="pill">framework 0.2.1 (beta)</span><span class="pill">ABI v12</span></p>
+  <p><span class="pill">framework 0.3.0 (beta)</span><span class="pill">ABI v13</span></p>
   <p>Everything a PalApi plugin can do, grouped by area. For each function: what it does, when a plugin
   uses it, and which thread it must run on. This complements <code>PLUGIN_API.md</code>; the whole API
   lives in one header, <code>include/palapi/palapi.h</code>.</p>
@@ -416,6 +416,36 @@ say clearly who crashed and on which function.</p>
   <div class="use"><b>Used for:</b> a clean hard stop when it is INTENDED (e.g. corrupt data, refusing to run).
   Pass <code>api-&gt;plugin_handle</code> so the stop is attributed to you. A native plugin can already crash on
   its own; <code>panic</code> makes that crash CLEAN and ATTRIBUTED.</div>
+</div>
+
+<h2 id="events2">Blocking events <span class="v">&mdash; api&gt;events2 (v13)</span></h2>
+<p class="intro">An interceptor is like a ProcessEvent observer, but it can VETO the engine call: return
+<code>PALAPI_EVENT_BLOCK</code> and the original UFunction is not dispatched. This is the foundation for
+anti-cheat, chat filters, and build/damage guards. It runs on the game thread before the original, for
+every ProcessEvent call, so you MUST filter to the function(s) you care about and proceed for the rest &mdash;
+blocking indiscriminately would stop the whole server.</p>
+<div class="fn">
+  <h3>events2.register_interceptor</h3>
+  <div class="sig">int register_interceptor(PalInterceptCallback cb, void* user, const void* plugin_handle);</div>
+  <p class="what">Register an interceptor. It returns <code>PALAPI_EVENT_PROCEED</code> (0) to let the call
+  run, or <code>PALAPI_EVENT_BLOCK</code> (1) to skip it. A BLOCK is honoured only for a function with no
+  return / out / reference parameter (checked by reflection) &mdash; skipping one that returns a value would
+  leave the caller reading a stale slot, so the block is refused and the call runs. An interceptor that
+  faults is isolated and treated as PROCEED (a broken plugin can never freeze the server by accident), and
+  only the exact value <code>PALAPI_EVENT_BLOCK</code> blocks &mdash; any other return proceeds. It inspects
+  <code>self</code>/<code>function</code>/<code>parms</code> to decide but must not mutate them (certified
+  argument changes are a separate future API); a block is honoured only on the game thread. Uses the same
+  single ProcessEvent dispatcher as the observers &mdash; no extra hook. Returns a handle &gt; 0, or 0 on
+  failure.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span><span class="tag t-danger">can stop engine calls</span></div>
+  <div class="use"><b>Used for:</b> refusing a cheated action (illegal move/damage), filtering chat, blocking
+  a build or capture &mdash; the anti-cheat building block.</div>
+</div>
+<div class="fn">
+  <h3>events2.unregister_interceptor</h3>
+  <div class="sig">int unregister_interceptor(int handle);</div>
+  <p class="what">Remove one interceptor by its handle. Returns 1 if one was removed. (Interceptors are also
+  removed automatically when your plugin unloads.)</p>
 </div>
 
 <h2 id="server2">Targeted messages <span class="v">&mdash; api&gt;server2 (v12)</span></h2>

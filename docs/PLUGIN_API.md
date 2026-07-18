@@ -87,7 +87,7 @@ Rules and limits:
 
 ## The PalApi struct
 
-`api->abi_version` is the ABI version the framework provides (the current header is ABI v12). The
+`api->abi_version` is the ABI version the framework provides (the current header is ABI v13). The
 struct is extended only by **appending**, so a plugin built against an older header keeps working —
 check `api->abi_version` before using a field newer than the version you built against.
 
@@ -111,6 +111,13 @@ Foundation (v1–v3):
   `remove_my_hooks(plugin_handle)` — for hooking functions OTHER than `ProcessEvent`.
 - `api->events` (ABI v3) — `register_processevent(pre, post, user, plugin_handle)` and
   `unregister_processevent(handle)`: observe `ProcessEvent` without hooking it (see below).
+- `api->events2` (ABI v13) — `register_interceptor(cb, user, plugin_handle)` / `unregister_interceptor(handle)`:
+  like an observer, but the callback returns a verdict and can **block** the engine call
+  (`PALAPI_EVENT_BLOCK`). The anti-cheat / filter / guard building block. A block is honoured only for a
+  function with no return/out/reference parameter (checked by reflection; otherwise it is refused and the
+  call runs); a faulting interceptor is treated as *proceed* (fail-open). It shares the single ProcessEvent
+  dispatcher with the observers — no extra hook. **You MUST filter by function name and proceed for the
+  rest** (compare `api->reflect.name_of(function)`); blocking everything would stop the server. Game thread.
 - `api->server.broadcast_message(utf8)` (ABI v3) — show a server notice to every connected player
   (game thread).
 - `api->plugin_handle` — your unique handle; pass it to the hook, thread, event, command, timer and
