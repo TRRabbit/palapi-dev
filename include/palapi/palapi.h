@@ -13,7 +13,8 @@
 // v2 active surface (calls with parameters, certified state read/write, game-thread marshaling,
 // hooking); v3 ProcessEvent observers + broadcast; v4 chat commands; v5 timers; v6 plugin config;
 // v7 player utilities; v8 command help/aliases; v9 typed calls; v10 custom RCON commands;
-// v11 host.panic (deliberate, attributed server crash). Each plugin
+// v11 host.panic (deliberate, attributed server crash); v12 server2.send_message_to_player /
+// send_message_to_players (targeted in-game chat message). Each plugin
 // receives its OWN PalApi whose `plugin_handle` uniquely identifies
 // it (pass it to hook/command/timer calls so the framework can remove that plugin's registrations
 // when it unloads).
@@ -21,8 +22,8 @@
 
 #include <stdint.h>
 
-#define PALAPI_ABI_VERSION 11u
-#define PALAPI_VERSION     "0.1.1"
+#define PALAPI_ABI_VERSION 12u
+#define PALAPI_VERSION     "0.2.0"
 
 #ifdef __cplusplus
 extern "C" {
@@ -330,6 +331,29 @@ typedef struct PalApiHost {
     void (*panic)(const void* plugin_handle, const char* reason);
 } PalApiHost;
 
+typedef struct PalApiServer2 {
+    // Show one free-text chat line to ONE connected player (it appears in THAT player's chat box
+    // only -- the targeted counterpart of server.broadcast_message). `player_uid16` is the raw
+    // 16-byte PlayerUId exactly as read from PalPlayerState.PlayerUId. `channel` selects the chat
+    // channel: only 0 (the default channel, proven to display in-game) is accepted today; any
+    // other value is refused (returns 0) until its routing is certified live -- never silently
+    // coerced. utf8_text: UTF-8 (emojis welcome), at most 512 UTF-16 units once decoded (an
+    // astral-plane emoji counts as two); longer OR malformed UTF-8 is refused outright, never
+    // truncated or repaired. MUST be called from the game thread (same contract as
+    // server.broadcast_message). Returns 1 when delivered, 0 when the player is not connected or
+    // an engine-signature gate refused. No allocation is retained: the engine copies the text
+    // and the framework frees its own buffer.
+    int (*send_message_to_player)(const unsigned char player_uid16[16], int channel,
+                                  const char* utf8_text);
+    // Same delivery to a LIST of players (e.g. a guild's online members): `player_uids16` is a
+    // packed array of `count` 16-byte PlayerUIds. `count` must be 1..128 (anything else returns
+    // 0). Offline entries are skipped, not errors. Returns the number of players actually
+    // delivered to (0..count). Cost is bounded: all recipients share ONE object-graph lookup,
+    // however many are offline. Game thread only.
+    int (*send_message_to_players)(const unsigned char* player_uids16, int count, int channel,
+                                   const char* utf8_text);
+} PalApiServer2;
+
 typedef struct PalApi {
     uint32_t      abi_version;       // equals PALAPI_ABI_VERSION for this header
     const char*   framework_version; // human-readable framework version
@@ -361,6 +385,8 @@ typedef struct PalApi {
     PalApiRcon rcon;
     // ABI v11 additions (appended; v1..v10 layout above is unchanged):
     PalApiHost host;
+    // ABI v12 additions (appended; v1..v11 layout above is unchanged):
+    PalApiServer2 server2;
 } PalApi;
 
 typedef void (*PalApiPluginInit)(const PalApi* api);

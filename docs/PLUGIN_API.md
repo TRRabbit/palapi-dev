@@ -87,7 +87,7 @@ Rules and limits:
 
 ## The PalApi struct
 
-`api->abi_version` is the ABI version the framework provides (the current header is ABI v11). The
+`api->abi_version` is the ABI version the framework provides (the current header is ABI v12). The
 struct is extended only by **appending**, so a plugin built against an older header keeps working —
 check `api->abi_version` before using a field newer than the version you built against.
 
@@ -136,6 +136,13 @@ Surface added later (each appended, guarded by `abi_version`):
   and native RCON is untouched.
 - `api->host.panic(plugin_handle, reason)` (v11) — deliberately shut the server down, attributed to
   you (see the trust-model section).
+- `api->server2` (v12) — `send_message_to_player(uid16, channel, utf8)` shows a free-text chat
+  line to ONE connected player (the targeted counterpart of `server.broadcast_message`);
+  `send_message_to_players(uids16, count, channel, utf8)` does the same for a packed list of
+  16-byte PlayerUIds (e.g. a guild's online members; `count` 1..128) and returns how many were
+  delivered. Only `channel` 0 (the default chat channel) is accepted today; other values are
+  refused until their routing is certified live. Game thread only; at most 512 UTF-16 units of
+  text (malformed or over-long UTF-8 is refused, never truncated).
 
 ## Custom RCON commands (ABI v10)
 
