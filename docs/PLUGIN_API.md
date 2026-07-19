@@ -113,11 +113,15 @@ Foundation (v1–v3):
   `unregister_processevent(handle)`: observe `ProcessEvent` without hooking it (see below).
 - `api->events2` (ABI v13) — `register_interceptor(cb, user, plugin_handle)` / `unregister_interceptor(handle)`:
   like an observer, but the callback returns a verdict and can **block** the engine call
-  (`PALAPI_EVENT_BLOCK`). The anti-cheat / filter / guard building block. A block is honoured only for a
-  function with no return/out/reference parameter (checked by reflection; otherwise it is refused and the
-  call runs); a faulting interceptor is treated as *proceed* (fail-open). It shares the single ProcessEvent
-  dispatcher with the observers — no extra hook. **You MUST filter by function name and proceed for the
-  rest** (compare `api->reflect.name_of(function)`); blocking everything would stop the server. Game thread.
+  (`PALAPI_EVENT_BLOCK`). The anti-cheat / filter / guard building block. A block is honoured for **any**
+  function the interceptor targets — the framework does not second-guess it (trust model: a plugin is
+  trusted native code; the boundary is the operator's choice of which plugins to enable). If the blocked
+  function is not a plain void (it returns a value or has an out/reference parameter), its engine caller may
+  read a stale return/out slot as if the call had run — you own that risk, so **test what you block**; the
+  framework logs a one-time warning for visibility but honours the block. A faulting interceptor is treated
+  as *proceed* (fail-open). It shares the single ProcessEvent dispatcher with the observers — no extra hook.
+  **You MUST filter by function name and proceed for the rest** (compare `api->reflect.name_of(function)`);
+  blocking everything would stop the server. Game thread.
 - `api->server.broadcast_message(utf8)` (ABI v3) — show a server notice to every connected player
   (game thread).
 - `api->plugin_handle` — your unique handle; pass it to the hook, thread, event, command, timer and
@@ -143,13 +147,22 @@ Surface added later (each appended, guarded by `abi_version`):
   and native RCON is untouched.
 - `api->host.panic(plugin_handle, reason)` (v11) — deliberately shut the server down, attributed to
   you (see the trust-model section).
-- `api->server2` (v12) — `send_message_to_player(uid16, channel, utf8)` shows a free-text chat
-  line to ONE connected player (the targeted counterpart of `server.broadcast_message`);
-  `send_message_to_players(uids16, count, channel, utf8)` does the same for a packed list of
-  16-byte PlayerUIds (e.g. a guild's online members; `count` 1..128) and returns how many were
-  delivered. Only `channel` 0 (the default chat channel) is accepted today; other values are
-  refused until their routing is certified live. Game thread only; at most 512 UTF-16 units of
-  text (malformed or over-long UTF-8 is refused, never truncated).
+- `api->server2` (v12) — `send_message_to_player(uid16, channel, utf8)` posts a free-text chat line
+  naming ONE player; `send_message_to_players(uids16, count, channel, utf8)` does the same for a
+  packed list of 16-byte PlayerUIds (`count` 1..128) and returns how many were delivered.
+  **Not private:** these route through the replicated chat pipeline, so the line is broadcast to
+  **every** connected player **and attributed to the target player** (it reads as if that player
+  typed it). Use them for a per-player-addressed *public* line, not for private feedback. `channel`
+  selects the chat category byte; 0 is the default channel known to display in-game, other values are
+  forwarded as-is (the plugin owns testing what a given category does on the live build). Game thread
+  only; at most 512 UTF-16 units of text (malformed or over-long UTF-8 is refused, never truncated).
+- `api->server2.send_private_message(uid16, utf8)` (v14) — deliver one **truly private** free-text
+  line to a single player: visible to THAT player only, shown as a system message (not attributed to
+  the player, not broadcast). It routes through the standard Unreal NetClient path
+  (`PlayerController::ClientMessage`), which the server replicates to the owning client alone. Same
+  512-UTF-16-unit cap and game-thread contract as above. Returns 1 when delivered to the client, 0
+  when the player is offline or a signature gate refused. This is the primitive to use for private
+  ORP / admin feedback.
 
 ## Custom RCON commands (ABI v10)
 

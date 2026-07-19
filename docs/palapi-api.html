@@ -428,9 +428,12 @@ blocking indiscriminately would stop the whole server.</p>
   <h3>events2.register_interceptor</h3>
   <div class="sig">int register_interceptor(PalInterceptCallback cb, void* user, const void* plugin_handle);</div>
   <p class="what">Register an interceptor. It returns <code>PALAPI_EVENT_PROCEED</code> (0) to let the call
-  run, or <code>PALAPI_EVENT_BLOCK</code> (1) to skip it. A BLOCK is honoured only for a function with no
-  return / out / reference parameter (checked by reflection) &mdash; skipping one that returns a value would
-  leave the caller reading a stale slot, so the block is refused and the call runs. An interceptor that
+  run, or <code>PALAPI_EVENT_BLOCK</code> (1) to skip it. A BLOCK is honoured for <b>any</b> function you
+  target &mdash; the framework does not second-guess it (a plugin is trusted native code; the boundary is the
+  operator's choice of which plugins to enable). If the blocked function is not a plain void (it returns a
+  value or has an out / reference parameter), its engine caller may read a stale return / out slot as if the
+  call had run: you own that risk, so test what you block. The framework logs a one-time warning for
+  visibility but honours the block. An interceptor that
   faults is isolated and treated as PROCEED (a broken plugin can never freeze the server by accident), and
   only the exact value <code>PALAPI_EVENT_BLOCK</code> blocks &mdash; any other return proceeds. It inspects
   <code>self</code>/<code>function</code>/<code>parms</code> to decide but must not mutate them (certified
@@ -448,32 +451,46 @@ blocking indiscriminately would stop the whole server.</p>
   removed automatically when your plugin unloads.)</p>
 </div>
 
-<h2 id="server2">Targeted messages <span class="v">&mdash; api&gt;server2 (v12)</span></h2>
-<p class="intro">The targeted counterpart of <code>server.broadcast_message</code>: show a free-text chat
-line to ONE connected player (or a list of them, e.g. a guild's online members) instead of the whole
-server. Delivered through the engine's own replicated chat path; the engine function's signature is
+<h2 id="server2">Targeted messages <span class="v">&mdash; api&gt;server2 (v12, v14)</span></h2>
+<p class="intro">Per-player messages. Two channels with very different semantics: a <b>public, named</b>
+chat line (v12) and a <b>truly private</b> system message (v14). Each engine function's signature is
 re-verified by reflection before every call and refused on any mismatch.</p>
 <div class="fn">
   <h3>server2.send_message_to_player</h3>
   <div class="sig">int send_message_to_player(const unsigned char player_uid16[16], int channel, const char* utf8_text);</div>
-  <p class="what">Show one chat line to the player whose raw 16-byte PlayerUId (as read from
-  <code>PalPlayerState.PlayerUId</code>) matches. Returns 1 when delivered, 0 when the player is not
-  connected or a safety gate refused. Only <code>channel</code> 0 (the default chat channel, proven to
-  display in-game) is accepted today; any other value is refused until its routing is certified live.
-  UTF-8, at most 512 UTF-16 units once decoded; malformed or over-long text is refused, never
-  truncated.</p>
+  <p class="what">Post one chat line naming the player whose raw 16-byte PlayerUId (as read from
+  <code>PalPlayerState.PlayerUId</code>) matches. <b>Not private:</b> this goes through the replicated
+  chat pipeline, so the line is broadcast to <b>every</b> connected player <b>and attributed to the
+  target player</b> (it reads as if they typed it). Use it for a per-player-addressed <em>public</em>
+  line, not for private feedback &mdash; for that use <code>send_private_message</code> below. Returns 1
+  when delivered, 0 when the player is not connected or a safety gate refused. <code>channel</code> is the
+  chat category byte: 0 is the default channel known to display in-game; any other value is forwarded as-is
+  (the plugin owns testing what a category does on the live build). UTF-8, at most 512 UTF-16 units once
+  decoded; malformed or over-long text is refused, never truncated.</p>
   <div class="meta"><span class="tag t-thread">game thread required</span></div>
-  <div class="use"><b>Used for:</b> per-player feedback that must not spam the whole server (e.g. "your
-  attack was blocked", "your base is under raid").</div>
+  <div class="use"><b>Used for:</b> a public line addressed to one player by name.</div>
 </div>
 <div class="fn">
   <h3>server2.send_message_to_players</h3>
   <div class="sig">int send_message_to_players(const unsigned char* player_uids16, int count, int channel, const char* utf8_text);</div>
-  <p class="what">Same delivery for a packed array of <code>count</code> 16-byte PlayerUIds
-  (<code>count</code> 1..128). Offline entries are skipped, not errors. Returns how many players were
-  actually delivered to (0..count). Cost is bounded: all recipients share one object-graph lookup.</p>
+  <p class="what">Same (public, broadcast + attributed) delivery for a packed array of <code>count</code>
+  16-byte PlayerUIds (<code>count</code> 1..128). Offline entries are skipped, not errors. Returns how many
+  players were actually delivered to (0..count). Cost is bounded: all recipients share one object-graph
+  lookup. Same non-private caveat as <code>send_message_to_player</code>.</p>
   <div class="meta"><span class="tag t-thread">game thread required</span></div>
-  <div class="use"><b>Used for:</b> guild-scoped notices &mdash; pass the guild's online members in one call.</div>
+  <div class="use"><b>Used for:</b> a public line addressed to a group by name (e.g. a guild).</div>
+</div>
+<div class="fn">
+  <h3>server2.send_private_message <span class="v">&mdash; v14</span></h3>
+  <div class="sig">int send_private_message(const unsigned char player_uid16[16], const char* utf8_text);</div>
+  <p class="what">Deliver one <b>truly private</b> free-text line to a single player: visible to THAT
+  player only, shown as a system message (not attributed to the player, not broadcast). It routes through
+  the standard Unreal NetClient path (<code>PlayerController::ClientMessage</code>), which the server
+  replicates to the owning client alone. Returns 1 when delivered to the client, 0 when the player is
+  offline or a signature gate refused. Same 512-UTF-16-unit cap and game-thread contract as above.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> private per-player feedback that must not spam or impersonate (e.g.
+  "your attack was blocked", "your base is under raid").</div>
 </div>
 
 <div class="note" style="margin-top:34px">

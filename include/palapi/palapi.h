@@ -15,7 +15,9 @@
 // v7 player utilities; v8 command help/aliases; v9 typed calls; v10 custom RCON commands;
 // v11 host.panic (deliberate, attributed server crash); v12 server2.send_message_to_player /
 // send_message_to_players (targeted in-game chat message); v13 events2.register_interceptor
-// (a ProcessEvent callback that can BLOCK the engine call, for anti-cheat / filters / guards).
+// (a ProcessEvent callback that can BLOCK the engine call, for anti-cheat / filters / guards);
+// v14 server2.send_private_message (a TRULY private per-player message via the NetClient path --
+// server -> owning client only, unlike send_message_to_player which broadcasts + impersonates).
 // Each plugin receives its OWN PalApi whose `plugin_handle` uniquely identifies
 // it (pass it to hook/command/timer calls so the framework can remove that plugin's registrations
 // when it unloads).
@@ -23,8 +25,8 @@
 
 #include <stdint.h>
 
-#define PALAPI_ABI_VERSION 13u
-#define PALAPI_VERSION     "0.3.0"
+#define PALAPI_ABI_VERSION 14u
+#define PALAPI_VERSION     "0.4.0"
 
 // Interceptor verdicts (ABI v13). An interceptor returns one of these.
 #define PALAPI_EVENT_PROCEED 0  // let the engine call run normally
@@ -363,26 +365,42 @@ typedef struct PalApiHost {
 } PalApiHost;
 
 typedef struct PalApiServer2 {
-    // Show one free-text chat line to ONE connected player (it appears in THAT player's chat box
-    // only -- the targeted counterpart of server.broadcast_message). `player_uid16` is the raw
-    // 16-byte PlayerUId exactly as read from PalPlayerState.PlayerUId. `channel` selects the chat
-    // channel: only 0 (the default channel, proven to display in-game) is accepted today; any
-    // other value is refused (returns 0) until its routing is certified live -- never silently
-    // coerced. utf8_text: UTF-8 (emojis welcome), at most 512 UTF-16 units once decoded (an
-    // astral-plane emoji counts as two); longer OR malformed UTF-8 is refused outright, never
+    // Post one free-text chat line naming ONE player (channel 0). WARNING: this routes through the
+    // REPLICATED chat pipeline (PalPlayerController::EnterChat_Receive), so the line is broadcast to
+    // EVERY connected player AND attributed to the
+    // target player -- it reads as if that player typed it. It is NOT private and NOT a system
+    // message. For a truly private, non-impersonating message to a single client, use
+    // send_private_message below. `player_uid16` is the raw 16-byte PlayerUId exactly as read from
+    // PalPlayerState.PlayerUId. `channel` is the chat category byte: 0 is the default channel known to
+    // display in-game; any other value is forwarded as-is (the plugin owns testing what a category
+    // does on the live build). utf8_text: UTF-8 (emojis welcome), at most 512 UTF-16 units once decoded
+    // (an astral-plane emoji counts as two); longer OR malformed UTF-8 is refused outright, never
     // truncated or repaired. MUST be called from the game thread (same contract as
     // server.broadcast_message). Returns 1 when delivered, 0 when the player is not connected or
     // an engine-signature gate refused. No allocation is retained: the engine copies the text
     // and the framework frees its own buffer.
     int (*send_message_to_player)(const unsigned char player_uid16[16], int channel,
                                   const char* utf8_text);
-    // Same delivery to a LIST of players (e.g. a guild's online members): `player_uids16` is a
-    // packed array of `count` 16-byte PlayerUIds. `count` must be 1..128 (anything else returns
-    // 0). Offline entries are skipped, not errors. Returns the number of players actually
-    // delivered to (0..count). Cost is bounded: all recipients share ONE object-graph lookup,
-    // however many are offline. Game thread only.
+    // Same (broadcast + attribution) delivery to a LIST of players (e.g. a guild's online members):
+    // `player_uids16` is a packed array of `count` 16-byte PlayerUIds. `count` must be 1..128
+    // (anything else returns 0). Offline entries are skipped, not errors. Returns the number of
+    // players actually delivered to (0..count). Cost is bounded: all recipients share ONE
+    // object-graph lookup, however many are offline. Game thread only. Same NON-private caveat as
+    // send_message_to_player.
     int (*send_message_to_players)(const unsigned char* player_uids16, int count, int channel,
                                    const char* utf8_text);
+    // ABI v14. Deliver one TRULY PRIVATE, free-text line to a single player -- visible to THAT
+    // player only, shown as a system message (NOT attributed to the player, NOT broadcast). It
+    // routes through the standard Unreal NetClient path PlayerController::ClientMessage: on the
+    // server, ProcessEvent sees FUNC_NetClient and replicates the call to the owning client alone.
+    // `player_uid16`: the raw 16-byte PlayerUId. utf8_text: same UTF-8 rules and 512-UTF-16-unit
+    // cap as above (over-long/malformed refused, never truncated). MUST be called from the game
+    // thread. Returns 1 when the call was delivered to the client, 0 when the player is not
+    // connected or an engine-signature gate refused. No allocation is retained. NOTE: that the
+    // client actually RENDERS ClientMessage in shipping Palworld is certified in-game (PalDefender
+    // delivers private messages on this build); if a build ever stops rendering it, the call still
+    // returns cleanly (it just shows nothing) -- it can never corrupt the engine.
+    int (*send_private_message)(const unsigned char player_uid16[16], const char* utf8_text);
 } PalApiServer2;
 
 typedef struct PalApi {

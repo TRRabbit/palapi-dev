@@ -9,7 +9,7 @@ timers, answer custom RCON commands, and more. Clients stay vanilla.
 
 ## Whats in here
 
-- `include/palapi/palapi.h` - the whole plugin API in one header (stable C ABI, version 11). This is
+- `include/palapi/palapi.h` - the whole plugin API in one header (stable C ABI, version 14). This is
   the only file you include.
 - `docs/PLUGIN_API.md` - the guide: how a plugin is structured, what each part of the API does, and
   the safety rules (very important: some calls are game-thread only, RCON handlers must never block).
