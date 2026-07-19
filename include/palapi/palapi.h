@@ -16,8 +16,10 @@
 // v11 host.panic (deliberate, attributed server crash); v12 server2.send_message_to_player /
 // send_message_to_players (targeted in-game chat message); v13 events2.register_interceptor
 // (a ProcessEvent callback that can BLOCK the engine call, for anti-cheat / filters / guards);
-// v14 server2.send_private_message (a TRULY private per-player message via the NetClient path --
+// v14 server3.send_private_message (a TRULY private per-player message via the NetClient path --
 // server -> owning client only, unlike send_message_to_player which broadcasts + impersonates).
+// NOTE: v14 lives in its OWN struct (server3), NOT as a new field in server2: sub-structs are
+// embedded by value, so growing one shifts every member after it and breaks older plugins.
 // Each plugin receives its OWN PalApi whose `plugin_handle` uniquely identifies
 // it (pass it to hook/command/timer calls so the framework can remove that plugin's registrations
 // when it unloads).
@@ -26,7 +28,7 @@
 #include <stdint.h>
 
 #define PALAPI_ABI_VERSION 14u
-#define PALAPI_VERSION     "0.4.0"
+#define PALAPI_VERSION     "0.4.1"
 
 // Interceptor verdicts (ABI v13). An interceptor returns one of these.
 #define PALAPI_EVENT_PROCEED 0  // let the engine call run normally
@@ -389,19 +391,26 @@ typedef struct PalApiServer2 {
     // send_message_to_player.
     int (*send_message_to_players)(const unsigned char* player_uids16, int count, int channel,
                                    const char* utf8_text);
-    // ABI v14. Deliver one TRULY PRIVATE, free-text line to a single player -- visible to THAT
-    // player only, shown as a system message (NOT attributed to the player, NOT broadcast). It
-    // routes through the standard Unreal NetClient path PlayerController::ClientMessage: on the
-    // server, ProcessEvent sees FUNC_NetClient and replicates the call to the owning client alone.
-    // `player_uid16`: the raw 16-byte PlayerUId. utf8_text: same UTF-8 rules and 512-UTF-16-unit
-    // cap as above (over-long/malformed refused, never truncated). MUST be called from the game
-    // thread. Returns 1 when the call was delivered to the client, 0 when the player is not
-    // connected or an engine-signature gate refused. No allocation is retained. NOTE: that the
-    // client actually RENDERS ClientMessage in shipping Palworld is certified in-game (PalDefender
-    // delivers private messages on this build); if a build ever stops rendering it, the call still
-    // returns cleanly (it just shows nothing) -- it can never corrupt the engine.
-    int (*send_private_message)(const unsigned char player_uid16[16], const char* utf8_text);
 } PalApiServer2;
+
+// ABI v14. A NEW struct rather than a new field in PalApiServer2 on purpose: `server2` is embedded
+// BY VALUE inside PalApi and is followed by `events2`, so growing it would shift every member after
+// it and a v13 plugin would read `events2` at the wrong offset (calling a bogus function pointer).
+// "Append-only" only ever holds at the ROOT of PalApi -- never inside an already-shipped sub-struct.
+typedef struct PalApiServer3 {
+    // Deliver one TRULY PRIVATE, free-text line to a single player -- visible to THAT player only,
+    // shown as a system message (NOT attributed to the player, NOT broadcast). It routes through the
+    // standard Unreal NetClient path PlayerController::ClientMessage: on the server, ProcessEvent
+    // sees FUNC_NetClient and replicates the call to the owning client alone.
+    // `player_uid16`: the raw 16-byte PlayerUId. utf8_text: UTF-8, at most 512 UTF-16 units once
+    // decoded (over-long/malformed refused, never truncated). MUST be called from the game thread.
+    // Returns 1 when the call was delivered to the client, 0 when the player is not connected or an
+    // engine-signature gate refused. No allocation is retained. NOTE: that the client actually
+    // RENDERS ClientMessage in shipping Palworld is certified in-game (PalDefender delivers private
+    // messages on this build); if a build ever stops rendering it, the call still returns cleanly
+    // (it just shows nothing) -- it can never corrupt the engine.
+    int (*send_private_message)(const unsigned char player_uid16[16], const char* utf8_text);
+} PalApiServer3;
 
 typedef struct PalApi {
     uint32_t      abi_version;       // equals PALAPI_ABI_VERSION for this header
@@ -438,6 +447,9 @@ typedef struct PalApi {
     PalApiServer2 server2;
     // ABI v13 additions (appended LAST; v1..v12 layout above is unchanged):
     PalApiEvents2 events2;
+    // ABI v14 additions (appended LAST; v1..v13 layout above is unchanged -- note that v14 does NOT
+    // touch PalApiServer2: growing an embedded sub-struct would shift every member after it):
+    PalApiServer3 server3;
 } PalApi;
 
 typedef void (*PalApiPluginInit)(const PalApi* api);

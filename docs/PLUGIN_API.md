@@ -87,9 +87,12 @@ Rules and limits:
 
 ## The PalApi struct
 
-`api->abi_version` is the ABI version the framework provides (the current header is ABI v13). The
-struct is extended only by **appending**, so a plugin built against an older header keeps working —
-check `api->abi_version` before using a field newer than the version you built against.
+`api->abi_version` is the ABI version the framework provides (the current header is ABI v14). The
+struct is extended only by **appending at the root of `PalApi`**, so a plugin built against an older
+header keeps working — check `api->abi_version` before using a field newer than the version you built
+against. Note for contributors: a new call must go in a **new** sub-struct appended at the end, never
+as a new field inside an already-shipped sub-struct (those are embedded by value, so growing one
+shifts every member after it and breaks older plugins).
 
 > The full, always-current reference for every field and function (with signatures and per-call
 > notes) is **`docs/palapi-api.html`** — open it in a browser. The list below is a quick map.
@@ -156,7 +159,7 @@ Surface added later (each appended, guarded by `abi_version`):
   selects the chat category byte; 0 is the default channel known to display in-game, other values are
   forwarded as-is (the plugin owns testing what a given category does on the live build). Game thread
   only; at most 512 UTF-16 units of text (malformed or over-long UTF-8 is refused, never truncated).
-- `api->server2.send_private_message(uid16, utf8)` (v14) — deliver one **truly private** free-text
+- `api->server3.send_private_message(uid16, utf8)` (v14) — deliver one **truly private** free-text
   line to a single player: visible to THAT player only, shown as a system message (not attributed to
   the player, not broadcast). It routes through the standard Unreal NetClient path
   (`PlayerController::ClientMessage`), which the server replicates to the owning client alone. Same
