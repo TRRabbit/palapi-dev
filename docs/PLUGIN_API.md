@@ -87,7 +87,7 @@ Rules and limits:
 
 ## The PalApi struct
 
-`api->abi_version` is the ABI version the framework provides (the current header is ABI v14). The
+`api->abi_version` is the ABI version the framework provides (the current header is ABI v15). The
 struct is extended only by **appending at the root of `PalApi`**, so a plugin built against an older
 header keeps working — check `api->abi_version` before using a field newer than the version you built
 against. Note for contributors: a new call must go in a **new** sub-struct appended at the end, never
@@ -159,13 +159,28 @@ Surface added later (each appended, guarded by `abi_version`):
   selects the chat category byte; 0 is the default channel known to display in-game, other values are
   forwarded as-is (the plugin owns testing what a given category does on the live build). Game thread
   only; at most 512 UTF-16 units of text (malformed or over-long UTF-8 is refused, never truncated).
-- `api->server3.send_private_message(uid16, utf8)` (v14) — deliver one **truly private** free-text
-  line to a single player: visible to THAT player only, shown as a system message (not attributed to
-  the player, not broadcast). It routes through the standard Unreal NetClient path
-  (`PlayerController::ClientMessage`), which the server replicates to the owning client alone. Same
-  512-UTF-16-unit cap and game-thread contract as above. Returns 1 when delivered to the client, 0
-  when the player is offline or a signature gate refused. This is the primitive to use for private
-  ORP / admin feedback.
+- `api->server4` (v15) — **the private channel to use.** `send_system_chat(uid16, utf8)` shows one
+  free-text line as a **system message in that player's chat**: visible to THAT player only, not
+  broadcast, not attributed to them. It calls the engine's own system-chat primitive
+  (`UPalUtility::SendSystemToPlayerChat`), the one the reference mod uses for private lines on this
+  build. `send_system_chat_to_players(uids16, count, utf8)` does the same for a packed list of 16-byte
+  PlayerUIds (`count` 1..128) — the engine primitive takes the recipients as a list, so a group send is
+  **one** engine call. Offline entries are dropped, not errors, and a uid listed twice is collapsed to
+  one recipient; the return is the number of **distinct connected players the call carried**. Same
+  512-UTF-16-unit cap and game-thread contract as above. What the line looks like (prefix, colour) is
+  decided by the game, not by PalApi.
+  **What is proven, and what is not.** PalApi has certified the engine signature by reflection on the
+  running build and exercised the dispatch on a test server (no fault, no crash, server alive
+  200 s later). It has **not** yet measured a connected shipping client showing the line. So read a
+  non-zero return as *"the engine call ran carrying that player"* — never as *"the player saw it"*.
+  That exact confusion is what made v14 look like it worked for a whole day.
+- `api->server3.send_private_message(uid16, utf8)` (v14) — **deprecated: displays nothing on a
+  shipping client.** It routes through `PlayerController::ClientMessage`, whose client-side path ends
+  in `ViewportClient->ViewportConsole` — a member that only exists under `#if ALLOW_CONSOLE`, which is
+  0 in a shipping build. The call executes cleanly server-side and returns 1, which is exactly what
+  made it look like it worked (measured in-game 2026-07-19: three sends, zero faults, the player saw
+  nothing, while a public broadcast displayed normally in the same minute). It is kept so v14 plugins
+  still compile and run harmlessly; port them to `server4.send_system_chat`.
 
 ## Custom RCON commands (ABI v10)
 

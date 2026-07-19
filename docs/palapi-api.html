@@ -47,7 +47,7 @@
 <div class="wrap">
 <header>
   <h1>PalApi &mdash; plugin API reference</h1>
-  <p><span class="pill">framework 0.4.1 (beta)</span><span class="pill">ABI v14</span></p>
+  <p><span class="pill">framework 0.5.0 (beta)</span><span class="pill">ABI v15</span></p>
   <p>Everything a PalApi plugin can do, grouped by area. For each function: what it does, when a plugin
   uses it, and which thread it must run on. This complements <code>PLUGIN_API.md</code>; the whole API
   lives in one header, <code>include/palapi/palapi.h</code>.</p>
@@ -451,7 +451,7 @@ blocking indiscriminately would stop the whole server.</p>
   removed automatically when your plugin unloads.)</p>
 </div>
 
-<h2 id="server2">Targeted messages <span class="v">&mdash; api&gt;server2 (v12, v14)</span></h2>
+<h2 id="server2">Targeted messages <span class="v">&mdash; api&gt;server2 / server4 (v12, v15)</span></h2>
 <p class="intro">Per-player messages. Two channels with very different semantics: a <b>public, named</b>
 chat line (v12) and a <b>truly private</b> system message (v14). Each engine function's signature is
 re-verified by reflection before every call and refused on any mismatch.</p>
@@ -481,16 +481,50 @@ re-verified by reflection before every call and refused on any mismatch.</p>
   <div class="use"><b>Used for:</b> a public line addressed to a group by name (e.g. a guild).</div>
 </div>
 <div class="fn">
-  <h3>server3.send_private_message <span class="v">&mdash; v14</span></h3>
-  <div class="sig">int send_private_message(const unsigned char player_uid16[16], const char* utf8_text);</div>
-  <p class="what">Deliver one <b>truly private</b> free-text line to a single player: visible to THAT
-  player only, shown as a system message (not attributed to the player, not broadcast). It routes through
-  the standard Unreal NetClient path (<code>PlayerController::ClientMessage</code>), which the server
-  replicates to the owning client alone. Returns 1 when delivered to the client, 0 when the player is
-  offline or a signature gate refused. Same 512-UTF-16-unit cap and game-thread contract as above.</p>
+  <h3>server4.send_system_chat <span class="v">&mdash; v15</span></h3>
+  <div class="sig">int send_system_chat(const unsigned char player_uid16[16], const char* utf8_text);</div>
+  <p class="what">Show one free-text line as a <b>system message in that player's chat</b>: visible to
+  THAT player only, not broadcast, not attributed to them. It calls the engine's own system-chat
+  primitive (<code>UPalUtility::SendSystemToPlayerChat</code>) &mdash; the one the reference mod uses for
+  private lines on this build &mdash; whose reflected signature and array element type are certified on the
+  running build before every call. Returns 1 when the engine call ran carrying that player, 0 when they are
+  not connected or a signature gate refused. Same 512-UTF-16-unit cap and game-thread contract as above.
+  What the line looks like on screen (prefix, colour) is decided by the game, not by PalApi.<br>
+  <b>Proven vs not proven:</b> the call is certified well-formed and harmless to the server (signature by
+  reflection, dispatch exercised on a test server, no fault, no crash). A connected shipping client
+  <em>showing</em> the line has not been measured by this project yet. Read a non-zero return as "the engine
+  call ran carrying that player", never as "the player saw it" &mdash; that confusion is what made v14 look
+  like it worked.</p>
   <div class="meta"><span class="tag t-thread">game thread required</span></div>
   <div class="use"><b>Used for:</b> private per-player feedback that must not spam or impersonate (e.g.
   "your attack was blocked", "your base is under raid").</div>
+</div>
+<div class="fn">
+  <h3>server4.send_system_chat_to_players <span class="v">&mdash; v15</span></h3>
+  <div class="sig">int send_system_chat_to_players(const unsigned char* player_uids16, int count, const char* utf8_text);</div>
+  <p class="what">The same system line for a packed array of <code>count</code> 16-byte PlayerUIds
+  (<code>count</code> 1..128) &mdash; a guild's online members, for instance. The engine primitive takes its
+  recipients as a list, so this is <b>one</b> engine call however many players it carries. Players who are
+  not connected are dropped, not errors, and a uid listed twice is collapsed to one recipient. Returns how
+  many <b>distinct connected players</b> the call carried (0..count) &mdash; never a count of list entries,
+  and never a count of players who saw anything.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> a private line to a group (guild alert, raid warning).</div>
+</div>
+<div class="fn">
+  <h3>server3.send_private_message <span class="v">&mdash; v14, deprecated</span></h3>
+  <div class="sig">int send_private_message(const unsigned char player_uid16[16], const char* utf8_text);</div>
+  <p class="what"><b>Displays nothing on a shipping client &mdash; use <code>server4.send_system_chat</code>
+  instead.</b> It routes through the standard Unreal NetClient path
+  (<code>PlayerController::ClientMessage</code>), which does replicate to the owning client; but the
+  client-side implementation ends in <code>ViewportClient-&gt;ViewportConsole</code>, a member created only
+  under <code>#if ALLOW_CONSOLE</code> &mdash; 0 in a shipping build. The pointer is null on a real client
+  and nothing is shown. Measured in-game on 2026-07-19: three sends, zero faults, the player saw nothing,
+  while a public broadcast displayed normally in the same minute. The return value proves the call ran
+  <em>on the server</em> &mdash; never reception, never rendering. Kept so v14 plugins still build and run
+  harmlessly.</p>
+  <div class="meta"><span class="tag t-thread">game thread required</span></div>
+  <div class="use"><b>Used for:</b> nothing new &mdash; port to <code>server4.send_system_chat</code>.</div>
 </div>
 
 <div class="note" style="margin-top:34px">
